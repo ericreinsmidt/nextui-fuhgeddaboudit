@@ -1,8 +1,8 @@
 {
   "name": "Fuhgeddaboudit",
-  "version": "v0.2.0",
+  "version": "v0.2.1",
   "type": "TOOL",
-  "description": "Remove game stats from the NextUI Game Tracker. Have too many games being tracked you don't want to scroll through? Select one you don't want and fuhgeddaboudit!",
+  "description": "Remove game stats from the NextUI Game Tracker. Have too many games being tracked you don't want to scroll through? Select one you don't want and fuhgeddaboudit! Also merges duplicate entries.",
   "author": "Eric Reinsmidt",
   "repo_url": "https://github.com/ericreinsmidt/nextui-fuhgeddaboudit",
   "release_filename": "Fuhgeddaboudit.tg5040.pak.zip",
@@ -10,6 +10,7 @@
     "tg5040"
   ],
   "changelog": {
+    "v0.2.1": "Fixed non-deterministic list sorting on matching number of plays, because I am a knucklehead.",
     "v0.2.0": "Merge duplicate entries (∴ button). Fix thumbnails not loading for palette-format PNG images.",
     "v0.1.0": "Initial release. Browse tracked games sorted by total playtime, select and delete play history."
   },

@@ -50,7 +50,8 @@ static const char *sort_label(sort_mode m) {
 }
 
 static int cmp_by_time(const void *a, const void *b) {
-    return ((const game_entry *)b)->play_time_total - ((const game_entry *)a)->play_time_total;
+    int d = ((const game_entry *)b)->play_time_total - ((const game_entry *)a)->play_time_total;
+    return d ? d : strcasecmp(((const game_entry *)a)->name, ((const game_entry *)b)->name);
 }
 
 static int cmp_by_name(const void *a, const void *b) {
@@ -58,7 +59,8 @@ static int cmp_by_name(const void *a, const void *b) {
 }
 
 static int cmp_by_plays(const void *a, const void *b) {
-    return ((const game_entry *)b)->play_count - ((const game_entry *)a)->play_count;
+    int d = ((const game_entry *)b)->play_count - ((const game_entry *)a)->play_count;
+    return d ? d : strcasecmp(((const game_entry *)a)->name, ((const game_entry *)b)->name);
 }
 
 static void reverse_games(void) {
