@@ -128,13 +128,16 @@ static void get_image_path(const char *rom_file, char *out, size_t out_len) {
  * ----------------------------------------------------------------------- */
 
 static SDL_Texture *load_rounded_image(const char *path, int size, int radius) {
-    SDL_Surface *img = IMG_Load(path);
+    SDL_Surface *raw = IMG_Load(path);
+    if (!raw) return NULL;
+
+    SDL_Surface *img = SDL_ConvertSurfaceFormat(raw, SDL_PIXELFORMAT_RGBA32, 0);
+    SDL_FreeSurface(raw);
     if (!img) return NULL;
 
     SDL_Surface *dst = SDL_CreateRGBSurfaceWithFormat(0, size, size, 32, SDL_PIXELFORMAT_RGBA32);
     if (!dst) { SDL_FreeSurface(img); return NULL; }
 
-    /* Scale source into dst */
     SDL_BlitScaled(img, NULL, dst, NULL);
     SDL_FreeSurface(img);
 
@@ -229,6 +232,152 @@ static void free_thumbnails(void) {
             games[i].thumbnail = NULL;
         }
     }
+}
+
+/* -----------------------------------------------------------------------
+ * Duplicate detection and merge
+ * ----------------------------------------------------------------------- */
+
+typedef struct {
+    char name[256];
+    int  count;
+} dup_group;
+
+static dup_group dup_groups[MAX_GAMES];
+static int dup_group_count = 0;
+
+typedef struct {
+    int          rom_id;
+    char         file_path[FUHGED_MAX_PATH];
+    int          play_count;
+    int          play_time_total;
+    SDL_Texture *thumbnail;
+} dup_entry;
+
+static dup_entry dup_entries[MAX_GAMES];
+static int dup_entry_count = 0;
+
+static int find_duplicates(void) {
+    sqlite3 *db = NULL;
+    sqlite3_stmt *stmt = NULL;
+    dup_group_count = 0;
+
+    if (sqlite3_open_v2(DB_PATH, &db, SQLITE_OPEN_READONLY, NULL) != SQLITE_OK)
+        return -1;
+
+    const char *sql =
+        "SELECT rom.name, COUNT(*) AS cnt "
+        "FROM rom "
+        "GROUP BY rom.name "
+        "HAVING cnt > 1;";
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        sqlite3_close(db);
+        return -1;
+    }
+
+    while (sqlite3_step(stmt) == SQLITE_ROW && dup_group_count < MAX_GAMES) {
+        dup_group *g = &dup_groups[dup_group_count];
+        const char *name = (const char *)sqlite3_column_text(stmt, 0);
+        snprintf(g->name, sizeof(g->name), "%s", name ? name : "(unknown)");
+        g->count = sqlite3_column_int(stmt, 1);
+        dup_group_count++;
+    }
+
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+    return 0;
+}
+
+static int load_dup_entries(const char *name) {
+    sqlite3 *db = NULL;
+    sqlite3_stmt *stmt = NULL;
+    dup_entry_count = 0;
+
+    if (sqlite3_open_v2(DB_PATH, &db, SQLITE_OPEN_READONLY, NULL) != SQLITE_OK)
+        return -1;
+
+    const char *sql =
+        "SELECT rom.id, rom.file_path, "
+        "  COUNT(play_activity.ROWID) AS play_count, "
+        "  COALESCE(SUM(play_activity.play_time), 0) AS play_time_total "
+        "FROM rom "
+        "LEFT JOIN play_activity ON rom.id = play_activity.rom_id "
+        "WHERE rom.name = ? "
+        "GROUP BY rom.id;";
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        sqlite3_close(db);
+        return -1;
+    }
+
+    sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC);
+
+    while (sqlite3_step(stmt) == SQLITE_ROW && dup_entry_count < MAX_GAMES) {
+        dup_entry *e = &dup_entries[dup_entry_count];
+        e->rom_id = sqlite3_column_int(stmt, 0);
+        const char *fpath = (const char *)sqlite3_column_text(stmt, 1);
+        snprintf(e->file_path, sizeof(e->file_path), "%s", fpath ? fpath : "");
+        e->play_count = sqlite3_column_int(stmt, 2);
+        e->play_time_total = sqlite3_column_int(stmt, 3);
+        dup_entry_count++;
+    }
+
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+    return 0;
+}
+
+static void load_dup_thumbnails(void) {
+    int thumb_size = AP_DS(42);
+    int thumb_r = thumb_size / 2;
+    for (int i = 0; i < dup_entry_count; i++) {
+        dup_entries[i].thumbnail = NULL;
+        if (dup_entries[i].file_path[0] == '\0') continue;
+        char img_path[FUHGED_MAX_PATH];
+        get_image_path(dup_entries[i].file_path, img_path, sizeof(img_path));
+        dup_entries[i].thumbnail = load_rounded_image(img_path, thumb_size, thumb_r);
+    }
+}
+
+static void free_dup_thumbnails(void) {
+    for (int i = 0; i < dup_entry_count; i++) {
+        if (dup_entries[i].thumbnail) {
+            SDL_DestroyTexture(dup_entries[i].thumbnail);
+            dup_entries[i].thumbnail = NULL;
+        }
+    }
+}
+
+static int merge_into(int keep_id, const char *name) {
+    sqlite3 *db = NULL;
+    if (sqlite3_open(DB_PATH, &db) != SQLITE_OK)
+        return -1;
+
+    sqlite3_stmt *stmt = NULL;
+
+    const char *reassign =
+        "UPDATE play_activity SET rom_id = ? "
+        "WHERE rom_id IN (SELECT id FROM rom WHERE name = ? AND id != ?);";
+    if (sqlite3_prepare_v2(db, reassign, -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_int(stmt, 1, keep_id);
+        sqlite3_bind_text(stmt, 2, name, -1, SQLITE_STATIC);
+        sqlite3_bind_int(stmt, 3, keep_id);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
+
+    const char *del_dups =
+        "DELETE FROM rom WHERE name = ? AND id != ?;";
+    if (sqlite3_prepare_v2(db, del_dups, -1, &stmt, NULL) == SQLITE_OK) {
+        sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC);
+        sqlite3_bind_int(stmt, 2, keep_id);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
+
+    sqlite3_close(db);
+    return 0;
 }
 
 /* -----------------------------------------------------------------------
@@ -368,15 +517,17 @@ int main(int argc, char *argv[]) {
             {"B", "QUIT"},
             {"Y", "SORT"},
             {"X", sort_reversed ? "DESC" : "ASC"},
+            {"\xe2\x88\xb4 MERGE", ""},
             {"A", "DELETE"},
         };
 
         pakkit_list_opts opts = {
             .title = title,
             .hints = hints,
-            .hint_count = 4,
+            .hint_count = 5,
             .secondary_button = AP_BTN_Y,
             .tertiary_button = AP_BTN_X,
+            .quaternary_button = AP_BTN_MENU,
             .initial_index = cursor,
         };
 
@@ -397,6 +548,98 @@ int main(int argc, char *argv[]) {
             sort_reversed = !sort_reversed;
             sort_games();
             cursor = 0;
+            continue;
+        }
+
+        if (result.action == PAKKIT_ACTION_QUATERNARY) {
+            find_duplicates();
+            if (dup_group_count == 0) {
+                pakkit_message("No duplicate entries found.", "OK");
+                continue;
+            }
+
+            pakkit_list_item dup_items[MAX_GAMES];
+            char dup_subs[MAX_GAMES][64];
+            for (int i = 0; i < dup_group_count; i++) {
+                snprintf(dup_subs[i], sizeof(dup_subs[i]), "%d entries", dup_groups[i].count);
+                dup_items[i].label = dup_groups[i].name;
+                dup_items[i].sublabel = dup_subs[i];
+                dup_items[i].thumbnail = default_thumb;
+            }
+
+            pakkit_hint dup_hints[] = {
+                {"B", "BACK"},
+                {"A", "SELECT"},
+            };
+            pakkit_list_opts dup_opts = {
+                .title = "Merge Duplicates",
+                .hints = dup_hints,
+                .hint_count = 2,
+                .initial_index = 0,
+            };
+            pakkit_list_result dup_result;
+            pakkit_list(&dup_opts, dup_items, dup_group_count, &dup_result);
+
+            if (dup_result.action == PAKKIT_ACTION_BACK)
+                continue;
+
+            int gi = dup_result.selected_index;
+            load_dup_entries(dup_groups[gi].name);
+            load_dup_thumbnails();
+
+            pakkit_list_item entry_items[MAX_GAMES];
+            char entry_subs[MAX_GAMES][128];
+            for (int i = 0; i < dup_entry_count; i++) {
+                char ts[32];
+                format_time(ts, sizeof(ts), dup_entries[i].play_time_total);
+                snprintf(entry_subs[i], sizeof(entry_subs[i]), "%s  |  %d plays",
+                         ts, dup_entries[i].play_count);
+                entry_items[i].label = dup_entries[i].file_path;
+                entry_items[i].sublabel = entry_subs[i];
+                entry_items[i].thumbnail = dup_entries[i].thumbnail ? dup_entries[i].thumbnail : default_thumb;
+            }
+
+            pakkit_hint entry_hints[] = {
+                {"B", "BACK"},
+                {"A", "KEEP"},
+            };
+            pakkit_list_opts entry_opts = {
+                .title = "Merge To Which Entry?",
+                .hints = entry_hints,
+                .hint_count = 2,
+                .initial_index = 0,
+            };
+            pakkit_list_result entry_result;
+            pakkit_list(&entry_opts, entry_items, dup_entry_count, &entry_result);
+
+            if (entry_result.action == PAKKIT_ACTION_BACK) {
+                free_dup_thumbnails();
+                continue;
+            }
+
+            int keep_idx = entry_result.selected_index;
+            int keep_id = dup_entries[keep_idx].rom_id;
+
+            char merge_msg[384];
+            snprintf(merge_msg, sizeof(merge_msg),
+                     "Merge %d entries into:\n\n%s\n\nAll play stats will be combined.",
+                     dup_entry_count, dup_entries[keep_idx].file_path);
+
+            if (pakkit_confirm(merge_msg, "MERGE", "NAH")) {
+                free_dup_thumbnails();
+                merge_into(keep_id, dup_groups[gi].name);
+                free_thumbnails();
+                load_games();
+                if (game_count == 0) {
+                    pakkit_message("All clean! Nothing to see here.", "OK");
+                    break;
+                }
+                load_thumbnails();
+                sort_games();
+                cursor = 0;
+            } else {
+                free_dup_thumbnails();
+            }
             continue;
         }
 

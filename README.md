@@ -17,6 +17,8 @@ Remove game stats from the NextUI Game Tracker for TrimUI Brick, Brick Hammer, a
 <p align="center">
   <img src="assets/screenshots/game_list.png" width="400" alt="Game list">
   <img src="assets/screenshots/confirm.png" width="400" alt="Confirm deletion">
+  <img src="assets/screenshots/merge_list.png" width="400" alt="Merge duplicates">
+  <img src="assets/screenshots/merge_entry.png" width="400" alt="Merge entry selection">
 </p>
 
 ## Features
@@ -25,6 +27,7 @@ Remove game stats from the NextUI Game Tracker for TrimUI Brick, Brick Hammer, a
 - **Sort options** — Sort by time played, name, or number of plays in ascending or descending order
 - **Confirmation before deletion** — No accidental deletions; confirm before you fuhgeddaboudit
 - **Clean database removal** — Deletes both play activity records and the rom entry from the tracker
+- **Merge duplicates** — Detect and merge duplicate entries, combining play stats into a single entry
 
 ## Install
 
@@ -46,6 +49,7 @@ Fuhgeddaboudit is available in the [NextUI Pak Store](https://github.com/NextUI-
 | A      | Delete selected game |
 | Y      | Cycle sort mode (Time / Name / Plays) |
 | X      | Toggle sort direction (ASC / DESC) |
+| ∴      | Merge duplicate entries |
 | B      | Quit |
 
 ## Building
