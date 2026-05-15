@@ -11,5 +11,10 @@
   ],
   "changelog": {
     "v0.1.0": "Initial release. Browse tracked games sorted by total playtime, select and delete play history."
-  }
+  },
+  "screenshots": [
+    "assets/screenshots/splash.png",
+    "assets/screenshots/game_list.png",
+    "assets/screenshots/confirm.png"
+  ]
 }

@@ -12,6 +12,13 @@ Remove game stats from the NextUI Game Tracker for TrimUI Brick, Brick Hammer, a
 
 </div>
 
+## Screenshots
+
+<p align="center">
+  <img src="assets/screenshots/game_list.png" width="400" alt="Game list">
+  <img src="assets/screenshots/confirm.png" width="400" alt="Confirm deletion">
+</p>
+
 ## Features
 
 - **Game list with thumbnails** — Browse all tracked games with box art, total play time, and play count
