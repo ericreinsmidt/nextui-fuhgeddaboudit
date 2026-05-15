@@ -1,0 +1,21 @@
+# Build artifacts
+build/
+*.o
+*.elf
+*.dSYM/
+
+# Pak binary (built, not committed)
+ports/*/pak/bin/
+
+# Distribution
+dist/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+*.swp
+*.swo
+
+.claude/
