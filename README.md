@@ -8,7 +8,7 @@
 [![Downloads](https://img.shields.io/github/downloads/ericreinsmidt/nextui-fuhgeddaboudit/total?style=for-the-badge&color=1A5DAB)](https://github.com/ericreinsmidt/nextui-fuhgeddaboudit/releases)
 [![License](https://img.shields.io/github/license/ericreinsmidt/nextui-fuhgeddaboudit?style=for-the-badge&color=3366cc)](LICENSE)
 
-Remove game stats from the NextUI Game Tracker for TrimUI Brick, Brick Hammer, and Smart Pro.
+Remove game stats from the NextUI Game Tracker for TrimUI Brick, Brick Hammer, and Smart Pro. Have too many games being tracked you don't want to scroll through? Select one you don't want and fuhgeddaboudit!
 
 </div>
 
