@@ -19,3 +19,6 @@ dist/
 *.swo
 
 .claude/
+
+# Test databases
+*.sqlite
