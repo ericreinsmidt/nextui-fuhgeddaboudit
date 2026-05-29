@@ -16,7 +16,7 @@
 
 #define DB_PATH    "/mnt/SDCARD/.userdata/shared/game_logs.sqlite"
 #define ROMS_PATH  "/mnt/SDCARD/Roms"
-#define MAX_GAMES  256
+#define MAX_GAMES  2048
 #define FUHGED_MAX_PATH   1280
 
 /* -----------------------------------------------------------------------
@@ -242,6 +242,7 @@ static void free_thumbnails(void) {
 
 typedef struct {
     char name[256];
+    char platform[128];
     int  count;
 } dup_group;
 
@@ -282,6 +283,7 @@ static int find_duplicates(void) {
         dup_group *g = &dup_groups[dup_group_count];
         const char *name = (const char *)sqlite3_column_text(stmt, 0);
         snprintf(g->name, sizeof(g->name), "%s", name ? name : "(unknown)");
+        g->platform[0] = '\0';
         g->count = sqlite3_column_int(stmt, 1);
         dup_group_count++;
     }
@@ -351,31 +353,33 @@ static void free_dup_thumbnails(void) {
     }
 }
 
-static int merge_into(int keep_id, const char *name) {
+static int merge_into(int keep_id, const int *selected) {
     sqlite3 *db = NULL;
     if (sqlite3_open(DB_PATH, &db) != SQLITE_OK)
         return -1;
 
     sqlite3_stmt *stmt = NULL;
 
-    const char *reassign =
-        "UPDATE play_activity SET rom_id = ? "
-        "WHERE rom_id IN (SELECT id FROM rom WHERE name = ? AND id != ?);";
-    if (sqlite3_prepare_v2(db, reassign, -1, &stmt, NULL) == SQLITE_OK) {
-        sqlite3_bind_int(stmt, 1, keep_id);
-        sqlite3_bind_text(stmt, 2, name, -1, SQLITE_STATIC);
-        sqlite3_bind_int(stmt, 3, keep_id);
-        sqlite3_step(stmt);
-        sqlite3_finalize(stmt);
-    }
+    /* Reassign play activity and delete each selected non-kept entry by ID */
+    for (int i = 0; i < dup_entry_count; i++) {
+        int rid = dup_entries[i].rom_id;
+        if (rid == keep_id) continue;
+        if (selected && !selected[i]) continue;
 
-    const char *del_dups =
-        "DELETE FROM rom WHERE name = ? AND id != ?;";
-    if (sqlite3_prepare_v2(db, del_dups, -1, &stmt, NULL) == SQLITE_OK) {
-        sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC);
-        sqlite3_bind_int(stmt, 2, keep_id);
-        sqlite3_step(stmt);
-        sqlite3_finalize(stmt);
+        const char *reassign = "UPDATE play_activity SET rom_id = ? WHERE rom_id = ?;";
+        if (sqlite3_prepare_v2(db, reassign, -1, &stmt, NULL) == SQLITE_OK) {
+            sqlite3_bind_int(stmt, 1, keep_id);
+            sqlite3_bind_int(stmt, 2, rid);
+            sqlite3_step(stmt);
+            sqlite3_finalize(stmt);
+        }
+
+        const char *del_rom = "DELETE FROM rom WHERE id = ?;";
+        if (sqlite3_prepare_v2(db, del_rom, -1, &stmt, NULL) == SQLITE_OK) {
+            sqlite3_bind_int(stmt, 1, rid);
+            sqlite3_step(stmt);
+            sqlite3_finalize(stmt);
+        }
     }
 
     sqlite3_close(db);
@@ -505,8 +509,24 @@ int main(int argc, char *argv[]) {
         for (int i = 0; i < game_count; i++) {
             char time_str[32];
             format_time(time_str, sizeof(time_str), games[i].play_time_total);
-            snprintf(sublabels[i], sizeof(sublabels[i]), "%s  |  %d plays",
-                     time_str, games[i].play_count);
+
+            /* Extract platform from file_path (everything before first '/') */
+            char platform[128] = "";
+            const char *slash = strchr(games[i].file_path, '/');
+            if (slash) {
+                size_t plen = (size_t)(slash - games[i].file_path);
+                if (plen >= sizeof(platform)) plen = sizeof(platform) - 1;
+                memcpy(platform, games[i].file_path, plen);
+                platform[plen] = '\0';
+            }
+
+            if (platform[0])
+                snprintf(sublabels[i], sizeof(sublabels[i]), "%s  |  %d plays  |  %s",
+                         time_str, games[i].play_count, platform);
+            else
+                snprintf(sublabels[i], sizeof(sublabels[i]), "%s  |  %d plays",
+                         time_str, games[i].play_count);
+
             items[i].label = games[i].name;
             items[i].sublabel = sublabels[i];
             items[i].thumbnail = games[i].thumbnail ? games[i].thumbnail : default_thumb;
@@ -589,47 +609,102 @@ int main(int argc, char *argv[]) {
             load_dup_entries(dup_groups[gi].name);
             load_dup_thumbnails();
 
+            /* Build list items for entries */
             pakkit_list_item entry_items[MAX_GAMES];
             char entry_subs[MAX_GAMES][128];
             for (int i = 0; i < dup_entry_count; i++) {
                 char ts[32];
                 format_time(ts, sizeof(ts), dup_entries[i].play_time_total);
-                snprintf(entry_subs[i], sizeof(entry_subs[i]), "%s  |  %d plays",
-                         ts, dup_entries[i].play_count);
-                entry_items[i].label = dup_entries[i].file_path;
+                char platform[128] = "";
+                const char *slash = strchr(dup_entries[i].file_path, '/');
+                if (slash) {
+                    size_t plen = (size_t)(slash - dup_entries[i].file_path);
+                    if (plen >= sizeof(platform)) plen = sizeof(platform) - 1;
+                    memcpy(platform, dup_entries[i].file_path, plen);
+                    platform[plen] = '\0';
+                }
+                if (platform[0])
+                    snprintf(entry_subs[i], sizeof(entry_subs[i]), "%s  |  %d plays  |  %s",
+                             ts, dup_entries[i].play_count, platform);
+                else
+                    snprintf(entry_subs[i], sizeof(entry_subs[i]), "%s  |  %d plays",
+                             ts, dup_entries[i].play_count);
+                entry_items[i].label = dup_groups[gi].name;
                 entry_items[i].sublabel = entry_subs[i];
                 entry_items[i].thumbnail = dup_entries[i].thumbnail ? dup_entries[i].thumbnail : default_thumb;
             }
 
-            pakkit_hint entry_hints[] = {
+            /* Step 1: Multiselect — which entries to merge */
+            pakkit_hint select_hints[] = {
                 {"B", "BACK"},
-                {"A", "KEEP"},
+                {"A", "TOGGLE"},
+                {"X", "NEXT"},
             };
-            pakkit_list_opts entry_opts = {
-                .title = "Merge To Which Entry?",
-                .hints = entry_hints,
-                .hint_count = 2,
+            pakkit_list_opts select_opts = {
+                .title = "Select Entries to Merge",
+                .hints = select_hints,
+                .hint_count = 3,
                 .initial_index = 0,
+                .multiselect = 1,
+                .min_selected = 2,
+                .secondary_button = AP_BTN_X,
             };
-            pakkit_list_result entry_result;
-            pakkit_list(&entry_opts, entry_items, dup_entry_count, &entry_result);
+            pakkit_list_result select_result;
+            pakkit_list(&select_opts, entry_items, dup_entry_count, &select_result);
 
-            if (entry_result.action == PAKKIT_ACTION_BACK) {
+            if (select_result.action != PAKKIT_ACTION_SECONDARY) {
                 free_dup_thumbnails();
                 continue;
             }
 
-            int keep_idx = entry_result.selected_index;
-            int keep_id = dup_entries[keep_idx].rom_id;
+            /* Build filtered list of only selected entries for keep selection */
+            int sel_map[MAX_GAMES];   /* sel_map[filtered_idx] = original_idx */
+            int sel_count = 0;
+            pakkit_list_item keep_items[MAX_GAMES];
+            char keep_subs[MAX_GAMES][128];
+            for (int i = 0; i < dup_entry_count; i++) {
+                if (!select_result.selections[i]) continue;
+                sel_map[sel_count] = i;
+                keep_items[sel_count].label = entry_items[i].label;
+                snprintf(keep_subs[sel_count], sizeof(keep_subs[sel_count]),
+                         "%s", entry_subs[i]);
+                keep_items[sel_count].sublabel = keep_subs[sel_count];
+                keep_items[sel_count].thumbnail = entry_items[i].thumbnail;
+                sel_count++;
+            }
 
+            /* Step 2: Pick which entry to keep */
+            pakkit_hint keep_hints[] = {
+                {"B", "BACK"},
+                {"A", "KEEP"},
+            };
+            pakkit_list_opts keep_opts = {
+                .title = "Merge To Which Entry?",
+                .hints = keep_hints,
+                .hint_count = 2,
+                .initial_index = 0,
+            };
+            pakkit_list_result keep_result;
+            pakkit_list(&keep_opts, keep_items, sel_count, &keep_result);
+
+            if (keep_result.action == PAKKIT_ACTION_BACK) {
+                free_dup_thumbnails();
+                continue;
+            }
+
+            int keep_orig_idx = sel_map[keep_result.selected_index];
+            int keep_id = dup_entries[keep_orig_idx].rom_id;
+
+            /* Step 3: Confirm */
             char merge_msg[384];
             snprintf(merge_msg, sizeof(merge_msg),
-                     "Merge %d entries into:\n\n%s\n\nAll play stats will be combined.",
-                     dup_entry_count, dup_entries[keep_idx].file_path);
+                     "Merge %d entries into:\n\n%s\n\nAll play stats will be combined.\nThe other %d entries will be deleted.",
+                     sel_count, dup_entries[keep_orig_idx].file_path,
+                     sel_count - 1);
 
-            if (pakkit_confirm(merge_msg, "MERGE", "NAH")) {
+            if (pakkit_confirm(merge_msg, "MERGE", "NAH") ) {
                 free_dup_thumbnails();
-                merge_into(keep_id, dup_groups[gi].name);
+                merge_into(keep_id, select_result.selections);
                 free_thumbnails();
                 load_games();
                 if (game_count == 0) {
@@ -655,7 +730,7 @@ int main(int argc, char *argv[]) {
                  "You can't undo this.\nYou sure you wanna fuhgeddaboudit?\n\n%s\n%s across %d plays",
                  g->name, time_str, g->play_count);
 
-        if (pakkit_confirm(confirm_msg, "FUHGEDDABOUDIT", "NAH")) {
+        if (pakkit_confirm(confirm_msg, "FUHGEDDABOUDIT", "NAH") ) {
             delete_game(g->rom_id);
             free_thumbnails();
             load_games();
